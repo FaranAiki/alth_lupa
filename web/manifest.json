@@ -1,6 +1,6 @@
 {
-    "name": "alth_lupa",
-    "short_name": "alth_lupa",
+    "name": "ALTH: Aku Lupa Tandai Hadir",
+    "short_name": "ALTH",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
