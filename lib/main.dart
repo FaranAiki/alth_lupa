@@ -12,6 +12,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
+// Standar User-Agent Chrome Desktop untuk membypass Firewall ITB / Cloudflare
+const String _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
 // ==========================================
 // INISIALISASI BACKGROUND SERVICE
 // ==========================================
@@ -94,9 +97,14 @@ void onStart(ServiceInstance service) async {
     final cookie = prefs.getString('cookie_six') ?? "";
     final nim = prefs.getString('nim_six') ?? "";
 
-    // Pengecekan login via khongguan (nissin otomatis ditambahkan saat login)
     if (!cookie.contains('khongguan=')) {
       service.invoke('log', {'message': 'Sesi kosong, menghentikan automasi latar belakang.'});
+      service.stopSelf();
+      break;
+    }
+
+    if (nim.isEmpty) {
+      service.invoke('log', {'message': 'NIM kosong! Automasi dibatalkan.'});
       service.stopSelf();
       break;
     }
@@ -124,11 +132,12 @@ void onStart(ServiceInstance service) async {
       var request = await httpClient.getUrl(Uri.parse(jadwalUrl));
       request.followRedirects = false; 
       request.headers.add('Cookie', cookie);
+      request.headers.add('User-Agent', _userAgent); // Identitas Chrome agar tidak diblokir
 
       var response = await request.close();
       
       if (response.statusCode == 302 || response.statusCode == 301) {
-        service.invoke('log', {'message': '🚨 ERROR: Cookie expired! Silakan relogin.'});
+        service.invoke('log', {'message': '🚨 ERROR: Cookie expired atau URL salah (Status 302). Silakan relogin.'});
         service.invoke('forceLogout'); 
         service.stopSelf();
         break;
@@ -203,6 +212,7 @@ Future<bool> _cekTandaiHadirBackground(HttpClient client, String urlPertemuan, S
     var req = await client.getUrl(Uri.parse(urlPertemuan));
     req.followRedirects = false;
     req.headers.add('Cookie', cookie);
+    req.headers.add('User-Agent', _userAgent);
     
     var res = await req.close();
     var body = await res.transform(utf8.decoder).join();
@@ -278,13 +288,14 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _cekSesi() async {
     final prefs = await SharedPreferences.getInstance();
     final cookie = prefs.getString('cookie_six') ?? "";
+    final nim = prefs.getString('nim_six') ?? "";
 
     await Future.delayed(const Duration(seconds: 1)); 
 
     if (!mounted) return;
 
-    // LOGIKA PENGECEKAN LOGIN: Memeriksa keberadaan khongguan
-    if (cookie.contains('khongguan=')) {
+    // Pastikan cookie khongguan ada dan NIM juga ada
+    if (cookie.contains('khongguan=') && nim.isNotEmpty) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const DashboardScreen()),
@@ -339,6 +350,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
         _isWebViewSupported = true;
         _controller = WebViewController()
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..setUserAgent(_userAgent) // PENTING: Gunakan Chrome UA di WebView
           ..setNavigationDelegate(
             NavigationDelegate(
               onPageFinished: (String url) {
@@ -351,9 +363,6 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
           )
           ..loadRequest(Uri.parse('https://six.itb.ac.id'));
 
-        // ==============================================
-        // TIMER PERIODIK: Cek cookie otomatis tiap 3 detik
-        // ==============================================
         _loginCheckerTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
           _periksaCookieOtomatis();
         });
@@ -379,12 +388,10 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
       String cookiesStr = cookiesObj.toString().replaceAll('"', '');
       String currentUrl = await _controller!.currentUrl() ?? "";
 
-      // Deteksi login: URL berpindah ke aplikasi internal ATAU cookie khongguan muncul
       bool isLoginUrl = currentUrl.contains('/app/');
       bool hasKhongguan = cookiesStr.contains('khongguan=');
 
       if (isLoginUrl || hasKhongguan) {
-        // Fallback jika OS menyembunyikan Cookie (HttpOnly)
         if (isLoginUrl && !hasKhongguan) {
           _loginCheckerTimer?.cancel();
           if (mounted) {
@@ -397,23 +404,16 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
           return;
         }
 
-        _loginCheckerTimer?.cancel(); // Hentikan loop timer
-        
-        // Tambahkan nissin=ms365 otomatis jika tidak ada
-        if (!cookiesStr.contains('nissin=')) {
-          cookiesStr += "; nissin=ms365;";
-        }
-
         String nim = _nimController.text.trim();
 
-        // 1. Coba cari NIM dari URL terlebih dahulu
+        // 1. Cari NIM dari URL
         RegExp urlNimRegex = RegExp(r'mahasiswa:(\d+)');
         final matchUrl = urlNimRegex.firstMatch(currentUrl);
         if (matchUrl != null) {
           nim = matchUrl.group(1)!;
         }
 
-        // 2. Jika NIM belum dapat, coba cari dari keseluruhan teks HTML (Scraping)
+        // 2. Jika tidak ada di URL, scraping seluruh HTML
         if (nim.isEmpty) {
           final Object htmlObj = await _controller!.runJavaScriptReturningResult('document.documentElement.innerText');
           RegExp textNimRegex = RegExp(r'\b([1-3][0-9]{7})\b');
@@ -423,7 +423,22 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
           }
         }
 
-        await _simpanSesi(cookiesStr, nim);
+        // PASTIKAN NIM SUDAH DIDAPAT SEBELUM PINDAH KE DASBOR
+        if (nim.isNotEmpty) {
+          _loginCheckerTimer?.cancel(); 
+          
+          if (!cookiesStr.contains('nissin=')) {
+            if (cookiesStr.isNotEmpty && !cookiesStr.trim().endsWith(';')) {
+              cookiesStr += ';';
+            }
+            cookiesStr += " nissin=ms365;";
+          }
+
+          await _simpanSesi(cookiesStr, nim);
+        } else {
+          // Jika URL sudah masuk tapi NIM belum ke-load, biarkan timer jalan dan log ke debug
+          debugPrint("Sesi terdeteksi, namun masih menunggu render NIM di halaman...");
+        }
       }
     } catch (e) {
       debugPrint("Gagal ekstrak data secara periodik: $e");
@@ -461,9 +476,9 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
     String khongguan = _khongguanController.text.trim();
     String nissin = _nissinController.text.trim();
 
-    if (khongguan.isEmpty) {
+    if (khongguan.isEmpty || nim.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Harap isi Cookie Khongguan terlebih dahulu!')),
+        const SnackBar(content: Text('Harap isi NIM dan Cookie Khongguan terlebih dahulu!')),
       );
       return;
     }
@@ -543,7 +558,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
             TextField(
               controller: _nimController,
               decoration: const InputDecoration(
-                labelText: "NIM (Opsional)",
+                labelText: "NIM Wajib",
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.person),
               ),
@@ -621,7 +636,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isAppInForeground = state == AppLifecycleState.resumed;
-    // Pengecekan kilat jika aplikasi dibuka kembali
     if (_isAppInForeground) {
       _cekAbsenSekarangLangsung();
     }
@@ -636,7 +650,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     bool isRunning = false;
     if (Platform.isAndroid || Platform.isIOS) {
       isRunning = await FlutterBackgroundService().isRunning();
-      // JIKA SERVICE BELUM BERJALAN, OTOMATIS JALANKAN SEKARANG
       if (!isRunning) {
         await _mulaiLooping();
         isRunning = true;
@@ -652,7 +665,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _isLooping = isRunning;
     });
 
-    // Pengecekan instan sesaat setelah Dashboard terbuka
     _cekAbsenSekarangLangsung();
   }
 
@@ -721,15 +733,18 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final cookie = prefs.getString('cookie_six') ?? "";
 
       String jadwalUrl = "$_domainAsli/app/mahasiswa:$_nim+2025-2/kelas/jadwal/mahasiswa";
+      _tambahLog("Mengecek URL: $jadwalUrl"); // DEBUG URL
+
       var httpClient = HttpClient();
       var request = await httpClient.getUrl(Uri.parse(jadwalUrl));
       request.followRedirects = false; 
       request.headers.add('Cookie', cookie);
+      request.headers.add('User-Agent', _userAgent);
 
       var response = await request.close();
       
       if (response.statusCode == 302 || response.statusCode == 301) {
-        _tambahLog("🚨 Pengecekan Kilat: Sesi Habis.");
+        _tambahLog("🚨 Pengecekan Kilat: Sesi Habis. HTTP: ${response.statusCode}");
         setState(() { _statusPresensi = "Sesi Berakhir"; });
         return;
       }
@@ -766,6 +781,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       if (mounted) {
         setState(() { _statusPresensi = "Gagal Mengecek"; });
       }
+      _tambahLog("🚨 Error Pengecekan Kilat: $e");
     }
   }
 
@@ -774,6 +790,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       var req = await client.getUrl(Uri.parse(urlPertemuan));
       req.followRedirects = false;
       req.headers.add('Cookie', cookie);
+      req.headers.add('User-Agent', _userAgent);
       
       var res = await req.close();
       var body = await res.transform(utf8.decoder).join();
