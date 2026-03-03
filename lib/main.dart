@@ -12,13 +12,10 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
-// TODO pecah ini bjir ini masih vibecoded as fuck
-
 // ==========================================
 // INISIALISASI BACKGROUND SERVICE
 // ==========================================
 Future<void> initializeService() async {
-  // Pengecekan platform agar tidak crash di Desktop (Linux/Windows/MacOS)
   if (!Platform.isAndroid && !Platform.isIOS) {
     debugPrint("Background service tidak didukung di platform ini. Mode lokal akan digunakan.");
     return;
@@ -28,9 +25,9 @@ Future<void> initializeService() async {
 
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'my_foreground', 
-    'SIX Absen Foreground Service', 
+    'ALTH Foreground Service', 
     description: 'Notifikasi persisten untuk automasi absen.', 
-    importance: Importance.low, // Low agar tidak berbunyi terus-menerus
+    importance: Importance.low, 
   );
 
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -46,11 +43,11 @@ Future<void> initializeService() async {
   await service.configure(
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
-      autoStart: false, // Jangan auto-start sebelum user login
+      autoStart: false, // Akan dipanggil manual saat di Dashboard
       isForegroundMode: true,
       notificationChannelId: 'my_foreground',
-      initialNotificationTitle: 'SIX Auto Absen',
-      initialNotificationContent: 'Menunggu inisialisasi...',
+      initialNotificationTitle: 'ALTH',
+      initialNotificationContent: 'Aku Lupa Tandai Hadir sedang berjalan.',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(
@@ -69,7 +66,7 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 }
 
 // ==========================================
-// LOGIKA UTAMA BACKGROUND (Jalan di Isolate Terpisah)
+// LOGIKA UTAMA BACKGROUND
 // ==========================================
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
@@ -86,20 +83,19 @@ void onStart(ServiceInstance service) async {
     });
   }
 
-  // Mendengarkan perintah stop dari UI
   service.on('stopService').listen((event) {
     service.stopSelf();
   });
 
   const String domainAsli = "https://six.itb.ac.id";
   
-  // Looping tak terbatas selayaknya Daemon / Go Routine
   while (true) {
     final prefs = await SharedPreferences.getInstance();
     final cookie = prefs.getString('cookie_six') ?? "";
     final nim = prefs.getString('nim_six') ?? "";
 
-    if (cookie.isEmpty || nim.isEmpty) {
+    // Pengecekan login via khongguan (nissin otomatis ditambahkan saat login)
+    if (!cookie.contains('khongguan=')) {
       service.invoke('log', {'message': 'Sesi kosong, menghentikan automasi latar belakang.'});
       service.stopSelf();
       break;
@@ -108,11 +104,10 @@ void onStart(ServiceInstance service) async {
     DateTime sekarang = DateTime.now();
     int jam = sekarang.hour;
 
-    // Cek jam tidur
     if (jam < 8 || jam >= 16) {
-      service.invoke('log', {'message': '💤 Jam ${jam.toString().padLeft(2, '0')}:${sekarang.minute.toString().padLeft(2, '0')} di luar jadwal kuliah. Tidur 1 jam...'});
+      service.invoke('log', {'message': '💤 Jam ${jam.toString().padLeft(2, '0')}:${sekarang.minute.toString().padLeft(2, '0')} di luar jadwal. Tidur 1 jam...'});
       if (service is AndroidServiceInstance) {
-        service.setForegroundNotificationInfo(title: "SIX Auto Absen", content: "Tidur 1 jam (Di luar jadwal 08:00 - 16:00)");
+        service.setForegroundNotificationInfo(title: "ALTH", content: "Tidur 1 jam (Di luar jadwal kuliah)");
       }
       await Future.delayed(const Duration(hours: 1));
       continue;
@@ -120,7 +115,7 @@ void onStart(ServiceInstance service) async {
 
     service.invoke('log', {'message': 'Memulai pengecekan jadwal SIX ITB...'});
     if (service is AndroidServiceInstance) {
-      service.setForegroundNotificationInfo(title: "SIX Auto Absen", content: "Aktif memeriksa kehadiran...");
+      service.setForegroundNotificationInfo(title: "ALTH", content: "Aku Lupa Tandai Hadir sedang berjalan.");
     }
 
     try {
@@ -134,24 +129,16 @@ void onStart(ServiceInstance service) async {
       
       if (response.statusCode == 302 || response.statusCode == 301) {
         service.invoke('log', {'message': '🚨 ERROR: Cookie expired! Silakan relogin.'});
-        service.invoke('forceLogout'); // Beri tahu UI untuk logout
+        service.invoke('forceLogout'); 
         service.stopSelf();
         break;
       } else if (response.statusCode != 200) {
         service.invoke('log', {'message': '🚨 ERROR: HTTP Status ${response.statusCode}'});
-        await Future.delayed(const Duration(seconds: 10)); // Tunggu sebentar lalu coba lagi
+        await Future.delayed(const Duration(seconds: 10));
         continue;
       }
 
       var responseBody = await response.transform(utf8.decoder).join();
-      
-      if (!responseBody.contains(nim)) {
-        service.invoke('log', {'message': '🚨 BYZANTINE FAULT DETECTED: NIM tidak ada. Nyasar ke halaman login!'});
-        service.invoke('forceLogout');
-        service.stopSelf();
-        break;
-      }
-
       var document = parse(responseBody);
       bool absenAvailable = false;
       String? foundUrl;
@@ -167,7 +154,6 @@ void onStart(ServiceInstance service) async {
 
           service.invoke('log', {'message': 'Mengecek detail pertemuan...'});
           
-          // Cek popup detail pertemuan
           bool adaAbsen = await _cekTandaiHadirBackground(httpClient, href, cookie, service);
           if (adaAbsen) {
             absenAvailable = true;
@@ -178,14 +164,13 @@ void onStart(ServiceInstance service) async {
       }
 
       if (absenAvailable) {
-        service.invoke('log', {'message': '🔥 Waktunya presensfi! MEMBUNYIKAN ALARM...'});
-        service.invoke('foundAbsen', {'url': foundUrl}); // Kirim URL ke UI
+        service.invoke('log', {'message': '🔥 WAKTUNYA ABSEN! MEMBUNYIKAN ALARM...'});
+        service.invoke('foundAbsen', {'url': foundUrl}); 
         
         if (service is AndroidServiceInstance) {
-          service.setForegroundNotificationInfo(title: "🔥 PRESENSI TERSEDIA!", content: "Ketuk untuk membuka aplikasi.");
+          service.setForegroundNotificationInfo(title: "🔥 ABSEN TERSEDIA!", content: "Ketuk untuk presensi ke SIX.");
         }
 
-        // Bunyikan Alarm Keras
         const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
             'absen_channel_loud', 'SIX Absen Notifikasi Keras',
             channelDescription: 'Notifikasi untuk absen SIX ITB',
@@ -197,7 +182,7 @@ void onStart(ServiceInstance service) async {
 
         const NotificationDetails platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
         await flutterLocalNotificationsPlugin.show(
-            0, '🔥 PRESENSI SIX ITB!', 'Tombol Tandai Hadir sudah muncul!', platformChannelSpecifics);
+            0, '🔥 ABSEN SIX ITB!', 'Tombol Tandai Hadir sudah muncul!', platformChannelSpecifics);
 
       } else {
         service.invoke('log', {'message': 'Aman. Belum ada tombol absen untuk saat ini.'});
@@ -213,7 +198,6 @@ void onStart(ServiceInstance service) async {
   }
 }
 
-// Fungsi bantu pengecekan di background
 Future<bool> _cekTandaiHadirBackground(HttpClient client, String urlPertemuan, String cookie, ServiceInstance service) async {
   try {
     var req = await client.getUrl(Uri.parse(urlPertemuan));
@@ -235,14 +219,12 @@ Future<bool> _cekTandaiHadirBackground(HttpClient client, String urlPertemuan, S
   return false;
 }
 
-
 // ==========================================
 // APLIKASI UTAMA (UI)
 // ==========================================
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // 1. Inisialisasi Notifikasi Normal & Linux
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
   const AndroidInitializationSettings initializationSettingsAndroid =
@@ -255,7 +237,6 @@ void main() async {
   );
   await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-  // 2. Inisialisasi Background Service (Sudah dibungkus try-catch / Pengecekan OS)
   await initializeService();
 
   runApp(const MyApp());
@@ -278,7 +259,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ==========================================
-// SPLASH SCREEN & LOGIN SCREEN
+// SPLASH SCREEN
 // ==========================================
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -296,14 +277,14 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _cekSesi() async {
     final prefs = await SharedPreferences.getInstance();
-    final cookie = prefs.getString('cookie_six');
-    final nim = prefs.getString('nim_six');
+    final cookie = prefs.getString('cookie_six') ?? "";
 
     await Future.delayed(const Duration(seconds: 1)); 
 
     if (!mounted) return;
 
-    if (cookie != null && cookie.isNotEmpty && nim != null && nim.isNotEmpty) {
+    // LOGIKA PENGECEKAN LOGIN: Memeriksa keberadaan khongguan
+    if (cookie.contains('khongguan=')) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const DashboardScreen()),
@@ -326,6 +307,9 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 }
 
+// ==========================================
+// LOGIN SCREEN
+// ==========================================
 class LoginSIXScreen extends StatefulWidget {
   const LoginSIXScreen({super.key});
 
@@ -337,6 +321,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
   WebViewController? _controller;
   bool _isLoading = true;
   bool _isWebViewSupported = false;
+  Timer? _loginCheckerTimer;
 
   final TextEditingController _nimController = TextEditingController();
   final TextEditingController _khongguanController = TextEditingController();
@@ -350,15 +335,14 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
 
   void _initWebView() {
     try {
-      if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+      if (Platform.isAndroid || Platform.isIOS) {
         _isWebViewSupported = true;
         _controller = WebViewController()
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
           ..setNavigationDelegate(
             NavigationDelegate(
-              onPageFinished: (String url) async {
+              onPageFinished: (String url) {
                 setState(() { _isLoading = false; });
-                _ekstrakData(url);
               },
               onPageStarted: (String url) {
                 setState(() { _isLoading = true; });
@@ -366,6 +350,13 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
             ),
           )
           ..loadRequest(Uri.parse('https://six.itb.ac.id'));
+
+        // ==============================================
+        // TIMER PERIODIK: Cek cookie otomatis tiap 3 detik
+        // ==============================================
+        _loginCheckerTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+          _periksaCookieOtomatis();
+        });
       } else {
         setState(() {
           _isWebViewSupported = false;
@@ -380,29 +371,69 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
     }
   }
 
-  Future<void> _ekstrakData(String url) async {
+  Future<void> _periksaCookieOtomatis() async {
+    if (_controller == null || !mounted) return;
+    
     try {
-      if (_controller == null) return;
-      
       final Object cookiesObj = await _controller!.runJavaScriptReturningResult('document.cookie');
       String cookiesStr = cookiesObj.toString().replaceAll('"', '');
+      String currentUrl = await _controller!.currentUrl() ?? "";
 
-      RegExp regExp = RegExp(r'mahasiswa:(\d+)');
-      final match = regExp.firstMatch(url);
+      // Deteksi login: URL berpindah ke aplikasi internal ATAU cookie khongguan muncul
+      bool isLoginUrl = currentUrl.contains('/app/');
+      bool hasKhongguan = cookiesStr.contains('khongguan=');
 
-      if (cookiesStr.contains('khongguan') && cookiesStr.contains('nissin') && match != null) {
-        String nim = match.group(1)!;
-        _simpanSesi(cookiesStr, nim);
+      if (isLoginUrl || hasKhongguan) {
+        // Fallback jika OS menyembunyikan Cookie (HttpOnly)
+        if (isLoginUrl && !hasKhongguan) {
+          _loginCheckerTimer?.cancel();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Ekstraksi Cookie diblokir oleh sistem. Harap gunakan Mode Manual.'),
+                duration: Duration(seconds: 5),
+            ));
+            setState(() { _isWebViewSupported = false; });
+          }
+          return;
+        }
+
+        _loginCheckerTimer?.cancel(); // Hentikan loop timer
+        
+        // Tambahkan nissin=ms365 otomatis jika tidak ada
+        if (!cookiesStr.contains('nissin=')) {
+          cookiesStr += "; nissin=ms365;";
+        }
+
+        String nim = _nimController.text.trim();
+
+        // 1. Coba cari NIM dari URL terlebih dahulu
+        RegExp urlNimRegex = RegExp(r'mahasiswa:(\d+)');
+        final matchUrl = urlNimRegex.firstMatch(currentUrl);
+        if (matchUrl != null) {
+          nim = matchUrl.group(1)!;
+        }
+
+        // 2. Jika NIM belum dapat, coba cari dari keseluruhan teks HTML (Scraping)
+        if (nim.isEmpty) {
+          final Object htmlObj = await _controller!.runJavaScriptReturningResult('document.documentElement.innerText');
+          RegExp textNimRegex = RegExp(r'\b([1-3][0-9]{7})\b');
+          final matchText = textNimRegex.firstMatch(htmlObj.toString());
+          if (matchText != null) {
+            nim = matchText.group(1)!;
+          }
+        }
+
+        await _simpanSesi(cookiesStr, nim);
       }
     } catch (e) {
-      debugPrint("Gagal ekstrak data: $e");
+      debugPrint("Gagal ekstrak data secara periodik: $e");
     }
   }
 
   Future<void> _simpanSesi(String cookie, String nim) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('cookie_six', cookie);
-    await prefs.setString('nim_six', nim);
+    if (nim.isNotEmpty) await prefs.setString('nim_six', nim);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -430,9 +461,9 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
     String khongguan = _khongguanController.text.trim();
     String nissin = _nissinController.text.trim();
 
-    if (nim.isEmpty || khongguan.isEmpty) {
+    if (khongguan.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Harap isi NIM dan Cookie Khongguan terlebih dahulu!')),
+        const SnackBar(content: Text('Harap isi Cookie Khongguan terlebih dahulu!')),
       );
       return;
     }
@@ -443,6 +474,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
 
   @override
   void dispose() {
+    _loginCheckerTimer?.cancel();
     _nimController.dispose();
     _khongguanController.dispose();
     _nissinController.dispose();
@@ -485,7 +517,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
             ),
             const SizedBox(height: 12),
             const Text(
-              "Karena keterbatasan sistem, buka SIX di browser untuk login. Setelah itu periksa Developer Tools (Network/Storage) untuk menyalin Cookie Anda.",
+              "Buka SIX di browser untuk login, lalu periksa Developer Tools untuk menyalin Cookie Anda.",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.black54),
             ),
@@ -511,7 +543,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
             TextField(
               controller: _nimController,
               decoration: const InputDecoration(
-                labelText: "NIM",
+                labelText: "NIM (Opsional)",
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.person),
               ),
@@ -553,7 +585,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
 }
 
 // ==========================================
-// 3. DASHBOARD (UI MONITORING SAJA)
+// 3. DASHBOARD (UI MONITORING & STATUS)
 // ==========================================
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -567,8 +599,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   bool _isLooping = false;
   bool _isAppInForeground = true; 
   
+  String _statusPresensi = "Mengecek saat ini...";
   String? _urlAbsenAktif; 
-  final String _domainAsli = "https://six.itb.ac.id"; // Menjaga URL agar desktop tetap bisa akses
+  final String _domainAsli = "https://six.itb.ac.id";
 
   final List<String> _logs = [];
   final ScrollController _scrollController = ScrollController();
@@ -588,6 +621,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isAppInForeground = state == AppLifecycleState.resumed;
+    // Pengecekan kilat jika aplikasi dibuka kembali
+    if (_isAppInForeground) {
+      _cekAbsenSekarangLangsung();
+    }
   }
 
   Future<void> _loadData() async {
@@ -596,40 +633,51 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _nim = prefs.getString('nim_six') ?? "";
     });
 
-    // Sinkronisasi status Service jika berjalan di Android/iOS
     bool isRunning = false;
     if (Platform.isAndroid || Platform.isIOS) {
       isRunning = await FlutterBackgroundService().isRunning();
+      // JIKA SERVICE BELUM BERJALAN, OTOMATIS JALANKAN SEKARANG
+      if (!isRunning) {
+        await _mulaiLooping();
+        isRunning = true;
+      }
+    } else {
+      if (!_isLooping) {
+        _mulaiLooping();
+        isRunning = true;
+      }
     }
+    
     setState(() {
       _isLooping = isRunning;
     });
+
+    // Pengecekan instan sesaat setelah Dashboard terbuka
+    _cekAbsenSekarangLangsung();
   }
 
   void _inisialisasiListener() {
-    if (!Platform.isAndroid && !Platform.isIOS) return; // Abaikan di Desktop
+    if (!Platform.isAndroid && !Platform.isIOS) return; 
     
     final service = FlutterBackgroundService();
 
-    // Dengarkan log dari Background Isolate
     _logSubscription = service.on('log').listen((event) {
       if (event != null && event['message'] != null) {
         _tambahLog(event['message'].toString());
       }
     });
 
-    // Dengarkan trigger Absen ditemukan
     _absenSubscription = service.on('foundAbsen').listen((event) {
       if (event != null && event['url'] != null) {
         setState(() {
           _urlAbsenAktif = event['url'].toString();
+          _statusPresensi = "🔥 Absen Tersedia!";
         });
       }
     });
 
-    // Dengarkan trigger bila Cookie Expired & minta paksa logout
     _logoutSubscription = service.on('forceLogout').listen((event) {
-      _logout(hentikanService: false); // Service sudah stop dirinya sendiri
+      _logout(hentikanService: false); 
     });
   }
 
@@ -660,14 +708,93 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     if (_logs.length > 200) _logs.removeAt(0); 
   }
 
+  // ==============================================================
+  // PENGECEKAN INSTAN (Jalan di Foreground saat Layar Aktif)
+  // ==============================================================
+  Future<void> _cekAbsenSekarangLangsung() async {
+    if (!mounted) return;
+    setState(() { _statusPresensi = "Mengecek saat ini..."; });
+    _tambahLog("Melakukan pengecekan kilat di layar...");
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cookie = prefs.getString('cookie_six') ?? "";
+
+      String jadwalUrl = "$_domainAsli/app/mahasiswa:$_nim+2025-2/kelas/jadwal/mahasiswa";
+      var httpClient = HttpClient();
+      var request = await httpClient.getUrl(Uri.parse(jadwalUrl));
+      request.followRedirects = false; 
+      request.headers.add('Cookie', cookie);
+
+      var response = await request.close();
+      
+      if (response.statusCode == 302 || response.statusCode == 301) {
+        _tambahLog("🚨 Pengecekan Kilat: Sesi Habis.");
+        setState(() { _statusPresensi = "Sesi Berakhir"; });
+        return;
+      }
+
+      var responseBody = await response.transform(utf8.decoder).join();
+      var document = parse(responseBody);
+      bool absenAvailable = false;
+      String? foundUrl;
+
+      var links = document.querySelectorAll("a[href*='/kelas/pertemuan/']");
+      
+      for (var link in links) {
+        var href = link.attributes['href'];
+        if (href != null) {
+          if (href.startsWith('/')) href = _domainAsli + href;
+          
+          bool adaAbsen = await _cekTandaiHadirKecil(httpClient, href, cookie);
+          if (adaAbsen) {
+            absenAvailable = true;
+            foundUrl = href;
+            break; 
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() { 
+          _urlAbsenAktif = foundUrl; 
+          _statusPresensi = absenAvailable ? "🔥 Absen Tersedia!" : "Belum Ada Absen";
+        });
+        _tambahLog("Hasil pengecekan kilat: $_statusPresensi");
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() { _statusPresensi = "Gagal Mengecek"; });
+      }
+    }
+  }
+
+  Future<bool> _cekTandaiHadirKecil(HttpClient client, String urlPertemuan, String cookie) async {
+    try {
+      var req = await client.getUrl(Uri.parse(urlPertemuan));
+      req.followRedirects = false;
+      req.headers.add('Cookie', cookie);
+      
+      var res = await req.close();
+      var body = await res.transform(utf8.decoder).join();
+      
+      var docDetail = parse(body);
+      String textContent = docDetail.body?.text ?? "";
+      if (textContent.contains("Tandai Hadir")) return true;
+    } catch (e) {
+      return false;
+    }
+    return false;
+  }
+  // ==============================================================
+
   Future<void> _mulaiLooping() async {
     if (Platform.isAndroid || Platform.isIOS) {
       final service = FlutterBackgroundService();
       await service.startService();
       setState(() { _isLooping = true; });
-      _tambahLog("Service latar belakang diaktifkan oleh pengguna.");
+      _tambahLog("Service latar belakang diaktifkan.");
     } else {
-      // MODE DESKTOP LOKAL (Karena tidak dukung background isolate natif)
       setState(() { _isLooping = true; });
       _tambahLog("Memulai pengecekan di mode Desktop LOKAL...");
       _jalankanLoopingDesktop();
@@ -683,9 +810,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     _tambahLog("Automasi dihentikan oleh pengguna.");
   }
 
-  // ==============================================================
-  // KUMPULAN FUNGSI FALLBACK UNTUK DESKTOP (LINUX / WINDOWS)
-  // ==============================================================
+  // Fallback Looping Desktop LOKAL
   Future<void> _jalankanLoopingDesktop() async {
     while (_isLooping) {
       DateTime sekarang = DateTime.now();
@@ -697,108 +822,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         continue;
       }
 
-      await _prosesPengecekanDesktop();
+      await _cekAbsenSekarangLangsung(); // Panggil fungsi kilat untuk Desktop
+      if (_urlAbsenAktif != null) {
+        _tambahLog("🔥 WAKTUNYA ABSEN! MEMBUNYIKAN ALARM...");
+        final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+        const LinuxNotificationDetails linuxSpecifics = LinuxNotificationDetails();
+        const NotificationDetails platformSpecifics = NotificationDetails(linux: linuxSpecifics);
+        await flutterLocalNotificationsPlugin.show(
+            0, '🔥 ABSEN SIX ITB!', 'Tombol Tandai Hadir sudah muncul!', platformSpecifics);
+      }
 
       int delayDetik = 5 + Random().nextInt(6);
       _tambahLog("Menunggu $delayDetik detik ....");
       await Future.delayed(Duration(seconds: delayDetik));
     }
   }
-
-  Future<void> _prosesPengecekanDesktop() async {
-    _tambahLog("Memulai pengecekan jadwal SIX ITB (Desktop)...");
-    
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final cookie = prefs.getString('cookie_six') ?? "";
-
-      String jadwalUrl = "$_domainAsli/app/mahasiswa:$_nim+2025-2/kelas/jadwal/mahasiswa";
-      var httpClient = HttpClient();
-      var request = await httpClient.getUrl(Uri.parse(jadwalUrl));
-      request.followRedirects = false; 
-      request.headers.add('Cookie', cookie);
-
-      var response = await request.close();
-      
-      if (response.statusCode == 302 || response.statusCode == 301) {
-        _tambahLog("🚨 ERROR: Cookie expired! Silakan relogin.");
-        _logout();
-        return;
-      } else if (response.statusCode != 200) {
-        _tambahLog("🚨 ERROR: HTTP Status ${response.statusCode}");
-        return;
-      }
-
-      var responseBody = await response.transform(utf8.decoder).join();
-      
-      if (!responseBody.contains(_nim)) {
-        _tambahLog("🚨 BYZANTINE FAULT DETECTED: NIM tidak ada. Nyasar ke halaman login!");
-        _logout();
-        return;
-      }
-
-      var document = parse(responseBody);
-      bool absenAvailable = false;
-      String? foundUrl;
-
-      var links = document.querySelectorAll("a[href*='/kelas/pertemuan/']");
-      
-      for (var link in links) {
-        var href = link.attributes['href'];
-        if (href != null) {
-          if (href.startsWith('/')) {
-            href = _domainAsli + href;
-          }
-
-          _tambahLog("Mengecek detail pertemuan...");
-          bool adaAbsen = await _cekTandaiHadirDesktop(httpClient, href, cookie);
-          if (adaAbsen) {
-            absenAvailable = true;
-            foundUrl = href;
-            break; 
-          }
-        }
-      }
-
-      if (mounted) setState(() { _urlAbsenAktif = foundUrl; });
-
-      if (absenAvailable) {
-        _tambahLog("Waktunya isi presensi! MEMBUNYIKAN ALARM...");
-        
-        final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-        const LinuxNotificationDetails linuxSpecifics = LinuxNotificationDetails();
-        const NotificationDetails platformSpecifics = NotificationDetails(linux: linuxSpecifics);
-        await flutterLocalNotificationsPlugin.show(
-            0, '🔥 PRESENSI SIX ITB!', 'Tombol Tandai Hadir sudah muncul!', platformSpecifics);
-
-      } else {
-        _tambahLog("Aman. Belum ada tombol absen untuk saat ini.");
-      }
-
-    } catch (e) {
-      _tambahLog("🚨 Terjadi kesalahan: $e");
-    }
-  }
-
-  Future<bool> _cekTandaiHadirDesktop(HttpClient client, String urlPertemuan, String cookie) async {
-    try {
-      var req = await client.getUrl(Uri.parse(urlPertemuan));
-      req.followRedirects = false;
-      req.headers.add('Cookie', cookie);
-      
-      var res = await req.close();
-      var body = await res.transform(utf8.decoder).join();
-      
-      var docDetail = parse(body);
-      String textContent = docDetail.body?.text ?? "";
-      
-      if (textContent.contains("Tandai Hadir")) return true;
-    } catch (e) {
-      _tambahLog("Gagal membuka link pertemuan: $e");
-    }
-    return false;
-  }
-  // ==============================================================
 
   Future<void> _bukaHalamanAbsenExternal() async {
     if (_urlAbsenAktif == null) return;
@@ -834,11 +872,18 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   @override
   Widget build(BuildContext context) {
+    bool isAbsenAda = _urlAbsenAktif != null;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Dasbor Absen ($_nim)', style: const TextStyle(color: Colors.white, fontSize: 18)),
         backgroundColor: Colors.blue.shade900,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            onPressed: () => _cekAbsenSekarangLangsung(),
+            tooltip: "Cek Ulang Manual",
+          ),
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.white),
             onPressed: () => _logout(),
@@ -848,9 +893,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       ),
       body: Column(
         children: [
+          // 1. Status Background Service
           Container(
-            padding: const EdgeInsets.all(16.0),
-            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
             color: Colors.blue.shade50,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -860,10 +905,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   children: [
                     Icon(
                       _isLooping ? Icons.check_circle : Icons.pause_circle, 
-                      color: _isLooping ? Colors.green : Colors.red
+                      color: _isLooping ? Colors.green : Colors.red,
+                      size: 18,
                     ),
                     const SizedBox(width: 8),
-                    Text(_isLooping ? (Platform.isAndroid || Platform.isIOS ? "Berjalan di Latar Belakang" : "Berjalan di Mode Lokal") : "Berhenti", 
+                    Text(_isLooping ? (Platform.isAndroid || Platform.isIOS ? "Berjalan di Latar" : "Berjalan Lokal") : "Berhenti", 
                       style: TextStyle(
                         fontWeight: FontWeight.bold, 
                         color: _isLooping ? Colors.green : Colors.red,
@@ -875,31 +921,64 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               ],
             ),
           ),
+
+          // 2. Tampilan Status Absen Saat Ini
+          Container(
+            margin: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.symmetric(vertical: 24.0, horizontal: 16.0),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: isAbsenAda ? Colors.green.shade100 : Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isAbsenAda ? Colors.green : Colors.grey.shade400,
+                width: 2
+              ),
+            ),
+            child: Column(
+              children: [
+                const Text("STATUS KEHADIRAN", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black54)),
+                const SizedBox(height: 8),
+                Text(
+                  _statusPresensi,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 24, 
+                    fontWeight: FontWeight.bold, 
+                    color: isAbsenAda ? Colors.green.shade800 : Colors.black87
+                  ),
+                ),
+              ],
+            ),
+          ),
           
-          // Tombol Buka Halaman Hadir
+          // 3. Tombol Buka Halaman Hadir
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: ElevatedButton.icon(
-              onPressed: _urlAbsenAktif != null ? _bukaHalamanAbsenExternal : null,
+              onPressed: isAbsenAda ? _bukaHalamanAbsenExternal : null,
               icon: const Icon(Icons.assignment_turned_in),
               label: Text(
-                _urlAbsenAktif != null ? "Buka Halaman Hadir Sekarang!" : "Belum Ada Absen Tersedia",
+                isAbsenAda ? "Presensi ke SIX Sekarang" : "Belum Ada Absen Tersedia",
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
+                minimumSize: const Size(double.infinity, 55),
                 backgroundColor: Colors.green.shade600,
                 foregroundColor: Colors.white,
                 disabledBackgroundColor: Colors.grey.shade300,
                 disabledForegroundColor: Colors.grey.shade600,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
               ),
             ),
           ),
 
-          // Area Logger
+          const SizedBox(height: 16),
+
+          // 4. Area Logger
           Expanded(
             child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              margin: const EdgeInsets.symmetric(horizontal: 16),
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: Colors.black87,
@@ -925,6 +1004,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             ),
           ),
           
+          // 5. Kontrol Mulai/Berhenti Background
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Row(
@@ -935,7 +1015,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     _mulaiLooping();
                   },
                   icon: const Icon(Icons.play_arrow),
-                  label: const Text("Mulai"),
+                  label: const Text("Mulai Auto"),
                 ),
                 ElevatedButton.icon(
                   onPressed: _isLooping ? () {
