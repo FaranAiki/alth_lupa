@@ -4,6 +4,13 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/> <!-- Penting untuk Android 14+ -->
+
+    <application>
+        <service
+            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:foregroundServiceType="dataSync" /> <!-- Harus sama dengan permission di atas -->
+    </application>
     <application
         android:label="ALTH: Aku Lupa Tandai Hadir!"
         android:name="${applicationName}"
