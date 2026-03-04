@@ -46,7 +46,7 @@ Future<void> initializeService() async {
   await service.configure(
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
-      autoStart: false, // Akan dipanggil manual saat di Dashboard
+      autoStart: false, 
       isForegroundMode: true,
       notificationChannelId: 'my_foreground',
       initialNotificationTitle: 'ALTH',
@@ -69,7 +69,7 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 }
 
 // ==========================================
-// LOGIKA UTAMA BACKGROUND
+// LOGIKA UTAMA BACKGROUND (ALGORITMA BARU)
 // ==========================================
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
@@ -121,7 +121,7 @@ void onStart(ServiceInstance service) async {
       continue;
     }
 
-    service.invoke('log', {'message': 'Memulai pengecekan jadwal SIX ITB...'});
+    service.invoke('log', {'message': 'Memulai pembacaan kalender SIX ITB...'});
     if (service is AndroidServiceInstance) {
       service.setForegroundNotificationInfo(title: "ALTH", content: "Aku Lupa Tandai Hadir sedang berjalan.");
     }
@@ -132,7 +132,7 @@ void onStart(ServiceInstance service) async {
       var request = await httpClient.getUrl(Uri.parse(jadwalUrl));
       request.followRedirects = false; 
       request.headers.add('Cookie', cookie);
-      request.headers.add('User-Agent', _userAgent); // Identitas Chrome agar tidak diblokir
+      request.headers.add('User-Agent', _userAgent);
 
       var response = await request.close();
       
@@ -151,33 +151,66 @@ void onStart(ServiceInstance service) async {
       var document = parse(responseBody);
       bool absenAvailable = false;
       String? foundUrl;
+      String matkulAktif = "";
 
-      var links = document.querySelectorAll("a[href*='/kelas/pertemuan/']");
+      // ======= ALGORITMA PENCARIAN TANGGAL =======
+      int tanggalHariIni = sekarang.day;
+      var cellHariIni = document.querySelector('td.bg-info');
       
-      for (var link in links) {
-        var href = link.attributes['href'];
-        if (href != null) {
-          if (href.startsWith('/')) {
-            href = domainAsli + href;
-          }
-
-          service.invoke('log', {'message': 'Mengecek detail pertemuan...'});
-          
-          bool adaAbsen = await _cekTandaiHadirBackground(httpClient, href, cookie, service);
-          if (adaAbsen) {
-            absenAvailable = true;
-            foundUrl = href;
-            break; 
+      // Fallback: Jika server tidak memberikan bg-info, cari td dengan teks angka hari ini
+      if (cellHariIni == null) {
+        var tds = document.querySelectorAll('td');
+        for (var td in tds) {
+          var dateDiv = td.children.where((e) => e.localName == 'div').firstOrNull;
+          if (dateDiv != null && dateDiv.text.trim() == tanggalHariIni.toString()) {
+            cellHariIni = td;
+            break;
           }
         }
       }
 
+      if (cellHariIni != null) {
+        // Cari elemen div yang memiliki atribut title (Mata Kuliah)
+        var matkulDivs = cellHariIni.querySelectorAll('div[title]');
+        
+        if (matkulDivs.isEmpty) {
+           service.invoke('log', {'message': 'Tanggal $tanggalHariIni: Tidak ada jadwal kuliah hari ini.'});
+        }
+
+        for (var matkul in matkulDivs) {
+          String namaMatkul = matkul.attributes['title'] ?? "Mata Kuliah Tidak Diketahui";
+          
+          // DIUBAH: Gunakan class linkpertemuan sesuai struktur HTML terbaru
+          var linkElement = matkul.querySelector("a.linkpertemuan");
+          if (linkElement != null) {
+            // DIUBAH: Ambil dari data-url, BUKAN href (karena href isinya hanya "#")
+            var dataUrl = linkElement.attributes['data-url'];
+            if (dataUrl != null) {
+              if (dataUrl.startsWith('/')) dataUrl = domainAsli + dataUrl;
+              
+              service.invoke('log', {'message': 'Mengecek: $namaMatkul'});
+              
+              bool adaAbsen = await _cekTandaiHadirBackground(httpClient, dataUrl, cookie, service);
+              if (adaAbsen) {
+                absenAvailable = true;
+                foundUrl = dataUrl;
+                matkulAktif = namaMatkul;
+                break; 
+              }
+            }
+          }
+        }
+      } else {
+        service.invoke('log', {'message': 'Tidak dapat menemukan kolom untuk tanggal $tanggalHariIni di kalender.'});
+      }
+      // ===========================================
+
       if (absenAvailable) {
-        service.invoke('log', {'message': '🔥 WAKTUNYA ABSEN! MEMBUNYIKAN ALARM...'});
+        service.invoke('log', {'message': '🔥 Absen TERSEDIA untuk $matkulAktif! Membunyikan alarm...'});
         service.invoke('foundAbsen', {'url': foundUrl}); 
         
         if (service is AndroidServiceInstance) {
-          service.setForegroundNotificationInfo(title: "🔥 ABSEN TERSEDIA!", content: "Ketuk untuk presensi ke SIX.");
+          service.setForegroundNotificationInfo(title: "🔥 ABSEN TERSEDIA!", content: matkulAktif);
         }
 
         const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
@@ -191,10 +224,10 @@ void onStart(ServiceInstance service) async {
 
         const NotificationDetails platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
         await flutterLocalNotificationsPlugin.show(
-            0, '🔥 ABSEN SIX ITB!', 'Tombol Tandai Hadir sudah muncul!', platformChannelSpecifics);
+            0, '🔥 ABSEN SIX ITB!', 'Tandai Hadir: $matkulAktif', platformChannelSpecifics);
 
       } else {
-        service.invoke('log', {'message': 'Aman. Belum ada tombol absen untuk saat ini.'});
+        service.invoke('log', {'message': 'Aman. Belum ada tombol absen terbuka saat ini.'});
       }
 
     } catch (e) {
@@ -258,7 +291,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SIX Auto Absen',
+      title: 'ALTH: Aku Lupa Tandai Hadir',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue.shade900),
         useMaterial3: true,
@@ -294,7 +327,6 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (!mounted) return;
 
-    // Pastikan cookie khongguan ada dan NIM juga ada
     if (cookie.contains('khongguan=') && nim.isNotEmpty) {
       Navigator.pushReplacement(
         context,
@@ -350,7 +382,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
         _isWebViewSupported = true;
         _controller = WebViewController()
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
-          ..setUserAgent(_userAgent) // PENTING: Gunakan Chrome UA di WebView
+          ..setUserAgent(_userAgent)
           ..setNavigationDelegate(
             NavigationDelegate(
               onPageFinished: (String url) {
@@ -406,14 +438,12 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
 
         String nim = _nimController.text.trim();
 
-        // 1. Cari NIM dari URL
         RegExp urlNimRegex = RegExp(r'mahasiswa:(\d+)');
         final matchUrl = urlNimRegex.firstMatch(currentUrl);
         if (matchUrl != null) {
           nim = matchUrl.group(1)!;
         }
 
-        // 2. Jika tidak ada di URL, scraping seluruh HTML
         if (nim.isEmpty) {
           final Object htmlObj = await _controller!.runJavaScriptReturningResult('document.documentElement.innerText');
           RegExp textNimRegex = RegExp(r'\b([1-3][0-9]{7})\b');
@@ -423,7 +453,6 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
           }
         }
 
-        // PASTIKAN NIM SUDAH DIDAPAT SEBELUM PINDAH KE DASBOR
         if (nim.isNotEmpty) {
           _loginCheckerTimer?.cancel(); 
           
@@ -435,9 +464,6 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
           }
 
           await _simpanSesi(cookiesStr, nim);
-        } else {
-          // Jika URL sudah masuk tapi NIM belum ke-load, biarkan timer jalan dan log ke debug
-          debugPrint("Sesi terdeteksi, namun masih menunggu render NIM di halaman...");
         }
       }
     } catch (e) {
@@ -721,19 +747,18 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   // ==============================================================
-  // PENGECEKAN INSTAN (Jalan di Foreground saat Layar Aktif)
+  // PENGECEKAN INSTAN ALGORITMA BARU
   // ==============================================================
   Future<void> _cekAbsenSekarangLangsung() async {
     if (!mounted) return;
     setState(() { _statusPresensi = "Mengecek saat ini..."; });
-    _tambahLog("Melakukan pengecekan kilat di layar...");
+    _tambahLog("Melakukan pembacaan kalender di layar...");
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final cookie = prefs.getString('cookie_six') ?? "";
 
       String jadwalUrl = "$_domainAsli/app/mahasiswa:$_nim+2025-2/kelas/jadwal/mahasiswa";
-      _tambahLog("Mengecek URL: $jadwalUrl"); // DEBUG URL
 
       var httpClient = HttpClient();
       var request = await httpClient.getUrl(Uri.parse(jadwalUrl));
@@ -753,21 +778,50 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       var document = parse(responseBody);
       bool absenAvailable = false;
       String? foundUrl;
+      String matkulAktif = "";
 
-      var links = document.querySelectorAll("a[href*='/kelas/pertemuan/']");
+      int tanggalHariIni = DateTime.now().day;
+      var cellHariIni = document.querySelector('td.bg-info');
       
-      for (var link in links) {
-        var href = link.attributes['href'];
-        if (href != null) {
-          if (href.startsWith('/')) href = _domainAsli + href;
-          
-          bool adaAbsen = await _cekTandaiHadirKecil(httpClient, href, cookie);
-          if (adaAbsen) {
-            absenAvailable = true;
-            foundUrl = href;
-            break; 
+      if (cellHariIni == null) {
+        var tds = document.querySelectorAll('td');
+        for (var td in tds) {
+          var dateDiv = td.children.where((e) => e.localName == 'div').firstOrNull;
+          if (dateDiv != null && dateDiv.text.trim() == tanggalHariIni.toString()) {
+            cellHariIni = td;
+            break;
           }
         }
+      }
+
+      if (cellHariIni != null) {
+        var matkulDivs = cellHariIni.querySelectorAll('div[title]');
+        if (matkulDivs.isEmpty) {
+           _tambahLog("Tanggal $tanggalHariIni: Tidak ada jadwal kuliah hari ini.");
+        }
+        for (var matkul in matkulDivs) {
+          String namaMatkul = matkul.attributes['title'] ?? "Mata Kuliah";
+          
+          // DIUBAH: Gunakan class linkpertemuan
+          var linkElement = matkul.querySelector("a.linkpertemuan");
+          
+          if (linkElement != null) {
+            // DIUBAH: Ambil dari data-url
+            var dataUrl = linkElement.attributes['data-url'];
+            if (dataUrl != null) {
+              if (dataUrl.startsWith('/')) dataUrl = _domainAsli + dataUrl;
+              bool adaAbsen = await _cekTandaiHadirKecil(httpClient, dataUrl, cookie);
+              if (adaAbsen) {
+                absenAvailable = true;
+                foundUrl = dataUrl;
+                matkulAktif = namaMatkul;
+                break; 
+              }
+            }
+          }
+        }
+      } else {
+        _tambahLog("Tidak dapat menemukan kolom untuk tanggal $tanggalHariIni di kalender.");
       }
 
       if (mounted) {
@@ -775,7 +829,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           _urlAbsenAktif = foundUrl; 
           _statusPresensi = absenAvailable ? "🔥 Absen Tersedia!" : "Belum Ada Absen";
         });
-        _tambahLog("Hasil pengecekan kilat: $_statusPresensi");
+        if (absenAvailable) _tambahLog("🔥 TERSEDIA: $matkulAktif");
       }
     } catch (e) {
       if (mounted) {
@@ -827,7 +881,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     _tambahLog("Automasi dihentikan oleh pengguna.");
   }
 
-  // Fallback Looping Desktop LOKAL
   Future<void> _jalankanLoopingDesktop() async {
     while (_isLooping) {
       DateTime sekarang = DateTime.now();
@@ -839,7 +892,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         continue;
       }
 
-      await _cekAbsenSekarangLangsung(); // Panggil fungsi kilat untuk Desktop
+      await _cekAbsenSekarangLangsung(); 
       if (_urlAbsenAktif != null) {
         _tambahLog("🔥 WAKTUNYA ABSEN! MEMBUNYIKAN ALARM...");
         final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -910,7 +963,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       ),
       body: Column(
         children: [
-          // 1. Status Background Service
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
             color: Colors.blue.shade50,
@@ -939,7 +991,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             ),
           ),
 
-          // 2. Tampilan Status Absen Saat Ini
           Container(
             margin: const EdgeInsets.all(16.0),
             padding: const EdgeInsets.symmetric(vertical: 24.0, horizontal: 16.0),
@@ -969,7 +1020,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             ),
           ),
           
-          // 3. Tombol Buka Halaman Hadir
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: ElevatedButton.icon(
@@ -992,7 +1042,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
           const SizedBox(height: 16),
 
-          // 4. Area Logger
           Expanded(
             child: Container(
               margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -1021,7 +1070,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             ),
           ),
           
-          // 5. Kontrol Mulai/Berhenti Background
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Row(
