@@ -68,7 +68,7 @@ class NotificationService {
       
       const channel = AndroidNotificationChannel(
         'my_foreground', 
-        'ALTH Foreground Service', 
+        'Alth Foreground Service', 
         description: 'Notifikasi persisten untuk automasi absen.', 
         importance: Importance.low, 
       );
@@ -78,8 +78,8 @@ class NotificationService {
 
   Future<void> showAlarm(String title, String body) async {
     const androidDetails = AndroidNotificationDetails(
-        'absen_channel_loud', 'SIX Absen Notifikasi Keras',
-        channelDescription: 'Notifikasi untuk absen SIX ITB',
+        'absen_channel_loud', 'Six Absen Notifikasi Keras',
+        channelDescription: 'Notifikasi untuk absen Six Itb',
         importance: Importance.max,
         priority: Priority.high,
         ticker: 'ticker',
@@ -207,8 +207,8 @@ class BackgroundManager {
         autoStart: true, // UBAH MENJADI TRUE AGAR LANGSUNG JALAN
         isForegroundMode: true,
         notificationChannelId: 'my_foreground',
-        initialNotificationTitle: 'ALTH',
-        initialNotificationContent: 'Menyiapkan automasi ALTH...',
+        initialNotificationTitle: 'Alth',
+        initialNotificationContent: 'Menyiapkan automasi Alth...',
         foregroundServiceNotificationId: 888,
       ),
       iosConfiguration: IosConfiguration(
@@ -259,7 +259,7 @@ void onStartBackground(ServiceInstance service) async {
     if (jam < 8 || jam >= 16) {
       service.invoke('log', {'message': '💤 Jam ${jam.toString().padLeft(2, '0')}:${sekarang.minute.toString().padLeft(2, '0')} di luar jadwal. Tidur 1 jam...'});
       if (service is AndroidServiceInstance) {
-        service.setForegroundNotificationInfo(title: "ALTH", content: "Tidur 1 jam (Di luar jadwal kuliah)");
+        service.setForegroundNotificationInfo(title: "Alth", content: "Tidur 1 jam (Di luar jadwal kuliah)");
       }
       await Future.delayed(const Duration(hours: 1));
       continue;
@@ -267,9 +267,9 @@ void onStartBackground(ServiceInstance service) async {
 
     // MEMPERBARUI NOTIFIKASI FOREGROUND SAAT MENGECEK
     if (service is AndroidServiceInstance) {
-      service.setForegroundNotificationInfo(title: "ALTH - Automasi Berjalan", content: "Mengecek jadwal SIX ITB secara aktif...");
+      service.setForegroundNotificationInfo(title: "Alth - Automasi Berjalan", content: "Mengecek jadwal Six Itb secara aktif...");
     }
-    service.invoke('log', {'message': 'Memulai pembacaan kalender SIX ITB...'});
+    service.invoke('log', {'message': 'Memulai pembacaan kalender Six Itb...'});
 
     // DECOUPLED LOGIC: Panggil API Service yang bebas UI
     final result = await api.checkJadwal(nim, cookie, service);
@@ -280,13 +280,13 @@ void onStartBackground(ServiceInstance service) async {
       service.stopSelf();
       break;
     } else if (result['status'] == 'found') {
-      service.invoke('log', {'message': '🔥 Absen TERSEDIA untuk ${result['matkul']}! Membunyikan alarm...'});
+      service.invoke('log', {'message': '🔥 Absen Tersedia untuk ${result['matkul']}! Membunyikan alarm...'});
       service.invoke('foundAbsen', {'url': result['url']}); 
       
       if (service is AndroidServiceInstance) {
-        service.setForegroundNotificationInfo(title: "🔥 ABSEN TERSEDIA!", content: "Ketuk untuk presensi: ${result['matkul']}");
+        service.setForegroundNotificationInfo(title: "🔥 Absen Tersedia!", content: "Ketuk untuk presensi: ${result['matkul']}");
       }
-      await notif.showAlarm('🔥 ABSEN SIX ITB!', 'Tandai Hadir: ${result['matkul']}');
+      await notif.showAlarm('🔥 Absen Six Itb!', 'Tandai Hadir: ${result['matkul']}');
     } else {
       service.invoke('log', {'message': result['message']});
     }

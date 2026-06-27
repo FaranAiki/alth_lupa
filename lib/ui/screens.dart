@@ -133,16 +133,26 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
   }
 
   Future<void> _simpanSesi(String cookie, String nim) async {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Memvalidasi sesi...')));
+
+    final result = await ApiService().checkJadwal(nim, cookie, null);
+    if (result['status'] == 'expired') {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gagal inisialisasi cookie')));
+      return;
+    }
+
     await StorageService().saveSession(cookie, nim);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sesi SIX Berhasil Disimpan!')));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sesi Six Berhasil Disimpan!')));
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const DashboardScreen()));
   }
 
   Future<void> _bukaBrowserEksternal() async {
     final Uri url = Uri.parse('https://six.itb.ac.id');
     if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gagal membuka browser.')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gagal Membuka Browser.')));
     }
   }
 
@@ -152,7 +162,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
     String nissin = _nissinController.text.trim();
 
     if (khongguan.isEmpty || nim.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('NIM dan Cookie Khongguan wajib diisi!')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nim Dan Cookie Khongguan Wajib Diisi!')));
       return;
     }
     await _simpanSesi("khongguan=$khongguan; nissin=$nissin;", nim);
@@ -170,7 +180,7 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Login ke SIX', style: TextStyle(color: Colors.white)), backgroundColor: Colors.blue.shade900),
+      appBar: AppBar(title: const Text('Login Ke Six', style: TextStyle(color: Colors.white)), backgroundColor: Colors.blue.shade900),
       body: _isWebViewSupported
           ? Stack(
               children: [
@@ -195,11 +205,11 @@ class _LoginSIXScreenState extends State<LoginSIXScreen> {
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: _bukaBrowserEksternal,
-              icon: const Icon(Icons.open_in_browser), label: const Text("Buka SIX di Browser"),
+              icon: const Icon(Icons.open_in_browser), label: const Text("Buka Six Di Browser"),
               style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade700, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)),
             ),
             const SizedBox(height: 24),
-            TextField(controller: _nimController, decoration: const InputDecoration(labelText: "NIM Wajib", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)), keyboardType: TextInputType.number),
+            TextField(controller: _nimController, decoration: const InputDecoration(labelText: "Nim Wajib", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)), keyboardType: TextInputType.number),
             const SizedBox(height: 16),
             TextField(controller: _khongguanController, decoration: const InputDecoration(labelText: "Cookie 'khongguan'", border: OutlineInputBorder(), prefixIcon: Icon(Icons.cookie))),
             const SizedBox(height: 16),
@@ -326,6 +336,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     if (result['status'] == 'expired') {
       _tambahLog("🚨 ${result['message']}");
       setState(() { _statusPresensi = "Sesi Berakhir"; });
+      _logout();
     } else if (result['status'] == 'found') {
       setState(() { 
         _urlAbsenAktif = result['url']; 
@@ -368,7 +379,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         continue;
       }
       await _cekAbsenSekarangLangsung(); 
-      if (_urlAbsenAktif != null) await NotificationService().showAlarm('🔥 ABSEN SIX ITB!', 'Tombol Tandai Hadir sudah muncul!');
+      if (_urlAbsenAktif != null) await NotificationService().showAlarm('🔥 Absen Six Itb!', 'Tombol Tandai Hadir sudah muncul!');
       await Future.delayed(Duration(seconds: 5 + Random().nextInt(6)));
     }
   }
@@ -433,7 +444,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             width: double.infinity, decoration: BoxDecoration(color: isAbsenAda ? Colors.green.shade100 : Colors.grey.shade200, borderRadius: BorderRadius.circular(16), border: Border.all(color: isAbsenAda ? Colors.green : Colors.grey.shade400, width: 2)),
             child: Column(
               children: [
-                const Text("STATUS KEHADIRAN", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black54)),
+                const Text("Status Kehadiran", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black54)),
                 const SizedBox(height: 8),
                 Text(_statusPresensi, textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: isAbsenAda ? Colors.green.shade800 : Colors.black87)),
               ],
@@ -444,7 +455,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             child: ElevatedButton.icon(
               onPressed: isAbsenAda ? _bukaHalamanAbsenExternal : null,
               icon: const Icon(Icons.assignment_turned_in),
-              label: Text(isAbsenAda ? "Presensi ke SIX Sekarang" : "Belum Ada Absen", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              label: Text(isAbsenAda ? "Presensi Ke Six Sekarang" : "Belum Ada Absen", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 55), backgroundColor: Colors.green.shade600, foregroundColor: Colors.white, disabledBackgroundColor: Colors.grey.shade300, disabledForegroundColor: Colors.grey.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
             ),
           ),
